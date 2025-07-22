@@ -1,5 +1,4 @@
 export generate_noise_mpi
-
 import CorrNoise
 using Random
 using FITSIO
