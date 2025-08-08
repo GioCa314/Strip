@@ -214,7 +214,7 @@ function get_chunk_properties(chunks, baseline_samples, fsamp_hz, rank)
         first_time[i] = (this_rank_chunk[i].first_idx - 1) / fsamp_hz
         last_time[i] = (this_rank_chunk[i].last_idx - 1) / fsamp_hz
         num_of_samples[i] = this_rank_chunk[i].num_of_elements 
-        num_of_baselines[i] = round(Int, num_of_samples[i] / baseline_samples[detector_number[i]]) 
+        num_of_baselines[i] = round(Int, num_of_samples[i] / baseline_samples[detector_number[i]]) #arrotondato, forse genera problemi perché non coerente con indici this_rank_chunk
         
        
        
