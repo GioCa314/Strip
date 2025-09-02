@@ -28,7 +28,7 @@ printmsg(@sprintf("""MPI parameters:
 """, rank, commsize))
 
 
-num_of_polarimeters = 3
+num_of_polarimeters = 2
 fsamp_hz = 50
 NSIDE = 256
 requested_time_days = 2
@@ -77,7 +77,7 @@ sim_num = string(isim,base=10,pad=5)
 #we set horn ID and the pull all detectors parameters from the database
 db = Sl.InstrumentDB()
 
-horn_id = ["G6", "R3", "I1"] 
+horn_id = ["G2", "O2"] 
 println("using polarimeters: ", horn_id)
 
 hrn     = [db.focalplane[hid] for hid in horn_id]
@@ -125,18 +125,13 @@ end
 fknee_hz = (fknee_hz_q .+ fknee_hz_u) ./ 2
 fknee_hz_q .= fknee_hz
 fknee_hz_u .= fknee_hz
-baseline_length_s = 1.0 ./(2.0 .* fknee_hz)
-baseline_samples = round.(Int, baseline_length_s .* fsamp_hz)
-lcm_samples = foldl(lcm, baseline_samples)
+baseline_length_s = 1.0 ./(2.0 .* fknee_hz) #decimale
+baseline_samples = round.(Int, baseline_length_s .* fsamp_hz) #intero per il round
 println("baseline samples: ", baseline_samples)
-println("lcm_samples: ", lcm_samples)
-requested_time_s = requested_time_days * 24 * 3600
-requested_samples = round(Int, requested_time_s * fsamp_hz)
-factor = round(Int, requested_samples / lcm_samples)
-mission_duration_samples = factor * lcm_samples
-mission_duration_s = mission_duration_samples / fsamp_hz
-println("factor: $factor")
-println("Mission duration samples: $mission_duration_samples = $mission_duration_s s.")
+requested_time_s = requested_time_days * 24 * 3600 #decimale float
+requested_samples = round(Int, requested_time_s * fsamp_hz) #intero 
+mission_duration_samples = requested_samples #intero
+println("Mission duration samples: $mission_duration_samples")
 alpha   = (alpha_q .+ alpha_u) ./2
 alpha_q .= alpha
 alpha_u .= alpha
@@ -154,7 +149,7 @@ horns_tag = join(horn_id, "-")
 out_map_root = "/home/users/giorgia.caruso1.stud/stripmultimap/users/Giorgia/sim_" * tod_mode *
                "-diode_Oof_destr_" * horns_tag *
                "_fk" * fknee_tag * "_bl" * bline_tag *
-               "_d" * lpad(total_time_s, 3, '0') *
+               "_d" * lpad(requested_time_s, 3, '0') *
                "_" * sim_num * "_test_array_prealloc_GC"
 
 
@@ -163,15 +158,11 @@ tsys_k = tnoise_k + tatm_k + ttel_k + tcmb_k
 τ_s = 1 / fsamp_hz
 σ_k = (tsys_k / sqrt(β_hz * τ_s))
 
-baselines_per_pol = (mission_duration_samples ./ baseline_samples)
-println("baselines_per_pol: ", baselines_per_pol)
 
-total_baselines = sum(baselines_per_pol)
-println("total baselines: ", total_baselines)
-total_samples  = mission_duration_samples * num_of_polarimeters
+total_samples  = mission_duration_samples * num_of_polarimeters #intero
 println("total samples: ", total_samples)
 
-samples_per_process = Sl.split_into_n(total_samples, commsize)
+samples_per_process = Sl.split_into_n(total_samples, commsize) 
 
 chunks = Sl.split_tod_mpi(
     mission_duration_samples,
@@ -182,44 +173,19 @@ chunks = Sl.split_tod_mpi(
 
  
 
-chunks = Sl.split_tod_mpi(
-    mission_duration_samples,
-    baseline_samples,
-    samples_per_process,
-    commsize
-)
+#chunks = Sl.split_tod_mpi(
+#    mission_duration_samples,
+#    baseline_samples,
+#    samples_per_process,
+#    commsize
+#)
 
-if rank == 0
-    println("[DEBUG] Total samples: ", total_samples)
-    println("[DEBUG] Samples per process: ", samples_per_process)
-    println("[DEBUG] Sum samples per process: ", sum(samples_per_process))
-    @assert sum(samples_per_process) == total_samples "Sum of samples per process does not match total samples!"
-end
+
 
 this_rank_chunk = chunks[rank + 1]
 
 (detector_number, first_time, last_time, num_of_baselines, num_of_samples) = Sl.get_chunk_properties(chunks, baseline_samples, fsamp_hz, rank)
 
-# Debug: stampa i risultati di get_chunk_properties
-if rank == 0
-    println("[DEBUG] get_chunk_properties results:")
-    println("[DEBUG] detector_number: ", detector_number)
-    println("[DEBUG] first_time: ", first_time)
-    println("[DEBUG] last_time: ", last_time)
-    println("[DEBUG] num_of_baselines: ", num_of_baselines)
-    println("[DEBUG] num_of_samples: ", num_of_samples)
-    println("[DEBUG] typeof(num_of_baselines): ", typeof(num_of_baselines))
-    println("[DEBUG] typeof(num_of_samples): ", typeof(num_of_samples))
-    
-    # Controlla se ci sono valori non interi
-    for i in 1:length(num_of_baselines)
-        det_num = detector_number[i]
-        samples = num_of_samples[i]
-        baselines = num_of_baselines[i]
-        expected_baselines = samples / baseline_samples[det_num]
-        println("[DEBUG] chunk $i: detector=$det_num, samples=$samples, baselines=$baselines, expected=$expected_baselines")
-    end
-end
 
 
 printmsg("Reading map \"$(sky_map)\"\n")  #inizio errori
@@ -247,7 +213,12 @@ stokes = 2
 tmp_seed_q = iseed .+ pol_id .* 999331 .+ isim .* 1867 .+ stokes .* 307
 seed_vec_q = UInt32.(tmp_seed_q)
 
-
+println("fknee_hz_q = ", fknee_hz_q)
+println("alpha_q = ", alpha_q)
+println("sigma_k = ", σ_k)
+println("baseline_samples = ", baseline_samples)
+println("samples_per_process = ", samples_per_process)
+@assert sum(samples_per_process) == mission_duration_samples * num_of_polarimeters
 noise_tod_q = Sl.generate_noise_mpi(       
     chunks,
     samples_per_process,
@@ -331,7 +302,7 @@ for i in 1:length(this_rank_chunk)
         times,
         #Dates.DateTime(2026, 01, 01, 00, 00, 00);
         day_duration_s = sidereal_day_s,
-        latitude_deg = 28.29,
+        latitude_deg = 28.29, #modificare a 30.(?) che funziona con tutti i pol
     ) do time_s
         (0.0, deg2rad(20.0), Sl.timetorotang(time_s, 1.))
     end
@@ -350,6 +321,7 @@ for i in 1:length(this_rank_chunk)
         
 
     local partial_sky_tod = inputmap_q.pixels[partial_pix_idx] .* w8s[:,1] .+ inputmap_u.pixels[partial_pix_idx] .* w8s[:,2] .+noise_chunk
+    
     global tod = append!(tod, partial_sky_tod)
 
     local partial_pix_idx = Healpix.ang2pixRing.(
@@ -404,28 +376,13 @@ end
 printmsg("================================\n")
 
 
-num_of_baselines = round.(Int, num_of_baselines)
-#array con N elem, uno per chunks, con n. di base. per chunk
+num_of_baselines = round.(Int, num_of_baselines) 
 num_of_samples = round.(Int, num_of_samples)
 #array con N elementi, uno per chunk appartenente a quel rank, con numero di campioni di ogni chunk (num of elements del chunk)
 detector_list = detector_number
 sigma_scalar = tsys_k / sqrt(β_hz * τ_s)
 
-if rank == 0
-    
-    for i in 1:length(num_of_baselines)
-        det_num = detector_number[i]
-        samples = num_of_samples[i]
-        baselines = num_of_baselines[i]
-        exact_baselines = samples / baseline_samples[det_num]
-        rounded_baselines = round(Int, exact_baselines)
-        
-        bl = samples ÷ baselines
-        reconstructed_samples = bl * baselines
-        println(" bl=$bl, bl*nbl=$reconstructed_samples")
-        
-    end
-end
+
 rms_list = [
       fill(sigma_scalar, num_of_samples[i])  #num of samples[i] = num of elements chunk i]
       for i in 1:length(num_of_samples) #lunghezza pari al n. di chunk del processo corrente
@@ -433,7 +390,7 @@ rms_list = [
 
 
 
-data_properties = Sl.build_noise_properties(detector_list, rms_list, num_of_baselines, num_of_samples)
+data_properties = Sl.build_noise_properties(detector_list, rms_list, num_of_baselines, num_of_samples, baseline_samples)
 cond_results = Sl.condnumber_mpi(
         pix_idx, num_of_pixels, twopsi, data_properties;
         comm     = comm,
@@ -455,7 +412,7 @@ Statistiche globali Condition Number (%d horn):
 """, num_of_polarimeters, medium, med, dev))
 
     if rank == 0
-      let fname = out_map_root * "_cond_multi_samp_t.fits"
+      let fname = out_map_root * "_cond_multi_samp_h.fits"
         printmsg("Saving multi-horn condmap to \"$fname\"\n")
         condmap = Healpix.HealpixMap{Float64,Healpix.RingOrder}(NSIDE)
         condmap.pixels = condnum
@@ -464,7 +421,7 @@ Statistiche globali Condition Number (%d horn):
     end
 
 
-data_properties = Sl.build_noise_properties(detector_list, rms_list, num_of_baselines, num_of_samples)
+data_properties = Sl.build_noise_properties(detector_list, rms_list, num_of_baselines, num_of_samples, baseline_samples)
 
 rnr_buffer = Sl.binned_noise_variance_mpi(
     pix_idx,
@@ -486,7 +443,7 @@ valid_u = rnr_buffer[3, :] .> 0
 
 if rank == 0
 
-    for (i, suffix) in enumerate(("_Q_white_rms_samp_t.fits", "_U_white_rms_samp_t.fits"))
+    for (i, suffix) in enumerate(("_Q_white_rms_samp_h.fits", "_U_white_rms_samp_h.fits"))
         let m = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
             m.pixels = σ_pix[i, :]
             Healpix.saveToFITS(m, out_map_root * suffix, typechar="D")
@@ -501,21 +458,20 @@ if rank == 0
     @printf("Pixel white-noise RMS (osservati): mean = %e, std = %e\n", μ_rms, σ_rms)
 end
 
+MPI.Barrier(comm)
 
-
-
-
-results = Sl.destripe(pix_idx, tod, num_of_pixels, twopsi, data_properties, rank, comm = comm ,unseen = hpx_badval ,max_iter = 10000 ,tod_mode = tod_mode,threshold=1.e-10)
+printmsg("Destriping the TOD\n")
+results = Sl.destripe(pix_idx, tod, num_of_pixels, twopsi, data_properties, rank, comm = comm ,unseen = hpx_badval ,max_iter = 10000 ,tod_mode = tod_mode,threshold=1.e-10, callback=callback)
 printmsg(@sprintf("Reached %e in %d iterations \n",last(results.convergence_param_list),results.best_iteration))
 
 if rank == 0
-    out_map_name =  out_map_root*"_Q_multi_samp_t.fits"
+    out_map_name =  out_map_root*"_Q_multi_samp_h.fits"
     printmsg("Saving the map in \"$(out_map_name)\"\n")
     mapfile = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
     mapfile.pixels = results.best_sky_map[1,:]
     Healpix.saveToFITS(mapfile, out_map_name, typechar = "D")
 
-    out_map_name =  out_map_root*"_U_multi_samp_t.fits"
+    out_map_name =  out_map_root*"_U_multi_samp_h.fits"
     printmsg("Saving the map in \"$(out_map_name)\"\n")
     mapfile = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
     mapfile.pixels = results.best_sky_map[2,:]
