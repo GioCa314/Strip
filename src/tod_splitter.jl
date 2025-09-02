@@ -99,14 +99,14 @@ which means:
 
 """
 function split_tod_mpi(
-    lcm_samples,
+    mission_duration_samples,
     baseline_samples,
     samples_per_process,
     num_of_MPI_proc,
 )
 
 ndet = length(baseline_samples)
-durations = lcm_samples  
+durations = mission_duration_samples  
 
 
 detector_num = 1
@@ -214,10 +214,9 @@ function get_chunk_properties(chunks, baseline_samples, fsamp_hz, rank)
         first_time[i] = (this_rank_chunk[i].first_idx - 1) / fsamp_hz
         last_time[i] = (this_rank_chunk[i].last_idx - 1) / fsamp_hz
         num_of_samples[i] = this_rank_chunk[i].num_of_elements 
-        num_of_baselines[i] = round(Int, num_of_samples[i] / baseline_samples[detector_number[i]]) #arrotondato, forse genera problemi perché non coerente con indici this_rank_chunk
+        #num_of_baselines[i] = round(Int, num_of_samples[i] / baseline_samples[detector_number[i]]) #arrotondato, forse genera problemi perché non coerente con indici this_rank_chunk
+        num_of_baselines[i] = ceil(Int, num_of_samples[i] / baseline_samples[detector_number[i]])
         
-       
-       
     end
     return (detector_number, first_time, last_time, num_of_baselines, num_of_samples)
 end
