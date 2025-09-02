@@ -125,10 +125,9 @@ N.B. if you want to use this function without MPI, remember to put rank = 0 and 
 """
 function generate_noise_mpi(
     chunks,
-   
     samples_per_process,
     baseline_samples,
-    lcm_samples,
+    mission_duration_samples,
     fsamp_hz,
     sigma_k,
     fknee_hz,
@@ -194,10 +193,11 @@ function generate_noise_mpi(
                 fsamp_hz,
             )
             
-            samples_per_pol = lcm_samples
+            samples_per_pol = mission_duration_samples
             pol_noise = Float64[
                 CorrNoise.randoof(rng) * sigma_k[pol_number] for i = 1:(samples_per_pol)
             ]
+            
         end
         isnothing(comm) || MPI.Barrier(comm)
                                                          
@@ -292,6 +292,7 @@ function generate_noise_mpi(
                         CorrNoise.randoof(rng) * sigma_k[cur_detector] for 
                         i = 1:(cur_num_noise_samples)
                     ]
+                    
                     previous_detector = cur_detector
 
                     if (i > 1)  
