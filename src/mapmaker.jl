@@ -71,7 +71,7 @@ N.B. the ID numbers, the number of 1/f baselines and the total number of samples
 It returns an array of `TodNoiseProperties`, of length equal to the number of polarimeters simulated by current rank.
 
 """
-function build_noise_properties(detector_list, rms_list, num_of_baselines, num_of_samples)
+function build_noise_properties(detector_list, rms_list, num_of_baselines, num_of_samples, baseline_samples)
     @assert length(detector_list) == length(rms_list)
     @assert length(detector_list) == length(num_of_baselines)
     @assert length(detector_list) == length(num_of_samples)
@@ -82,15 +82,17 @@ function build_noise_properties(detector_list, rms_list, num_of_baselines, num_o
     for i in 1:length(detector_list) #for every chunk
         
         
-        bl = div(num_of_samples[i], num_of_baselines[i])  
-        remainder = num_of_samples[i] % num_of_baselines[i]  
-        println("bl = $bl, remainder = $remainder")
+        #bl = div(num_of_samples[i], num_of_baselines[i])  
+        #remainder = num_of_samples[i] % num_of_baselines[i]  
+        #println("bl = $bl, remainder = $remainder")
         
-        baseline_lengths = fill(bl, num_of_baselines[i])
-    
-        for j in 1:remainder
-            baseline_lengths[j] += 1
-        end
+        #baseline_lengths = fill(bl, num_of_baselines[i])
+        baseline_lengths = fill(baseline_samples[detector_list[i]], num_of_baselines[i])
+        baseline_lengths[end] = num_of_samples[i] - (baseline_samples[detector_list[i]] * (num_of_baselines[i] - 1))
+
+        #for j in 1:remainder
+        #    baseline_lengths[j] += 1
+        #end
        
         println("length(rms_list[$i]) = ", length(rms_list[i]))
         println("sum(baseline_lengths) = ", sum(baseline_lengths))
