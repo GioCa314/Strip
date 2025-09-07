@@ -1,3 +1,4 @@
+
 import MPI
 import Healpix
 import Random
@@ -31,7 +32,7 @@ printmsg(@sprintf("""MPI parameters:
 num_of_polarimeters = 2
 fsamp_hz = 50
 NSIDE = 256
-requested_time_days = 2
+requested_time_days = 10
 
 hpx_badval    = -1.6375e30
 sidereal_day_s = 86164.0905
@@ -77,7 +78,7 @@ sim_num = string(isim,base=10,pad=5)
 #we set horn ID and the pull all detectors parameters from the database
 db = Sl.InstrumentDB()
 
-horn_id = ["G2", "O2"] 
+horn_id = ["I1", "I1"] 
 println("using polarimeters: ", horn_id)
 
 hrn     = [db.focalplane[hid] for hid in horn_id]
@@ -89,6 +90,7 @@ fknee_hz_q = zeros(num_of_polarimeters)
 fknee_hz_u = zeros(num_of_polarimeters)
 alpha_q    = zeros(num_of_polarimeters)
 alpha_u    = zeros(num_of_polarimeters)
+tnoise_k  = zeros(num_of_polarimeters)
 
 
 for i in 1:num_of_polarimeters
@@ -120,8 +122,14 @@ for i in 1:num_of_polarimeters
         alpha_u[i] = 1.0
     end
 
-end
+    if d.tnoise.tnoise_k > 0
+        tnoise_k[i] = d.tnoise.tnoise_k
+    else
+        tnoise_k[i] = 35.0
+    end
 
+end
+println("tnoise_k: ", tnoise_k)
 fknee_hz = (fknee_hz_q .+ fknee_hz_u) ./ 2
 fknee_hz_q .= fknee_hz
 fknee_hz_u .= fknee_hz
@@ -139,8 +147,7 @@ alpha_u .= alpha
 tcmb_k = 2.7255
 tatm_k = 15
 ttel_k = 3
-tnoise_k = 35
-#diversa per ogni pol -> vedi database
+#tnoise_k = 35
 β_hz = 7e9
 
 fknee_tag = join((@sprintf("%04.3f", x) for x in fknee_hz), "-")
@@ -149,14 +156,16 @@ horns_tag = join(horn_id, "-")
 out_map_root = "/home/users/giorgia.caruso1.stud/stripmultimap/users/Giorgia/sim_" * tod_mode *
                "-diode_Oof_destr_" * horns_tag *
                "_fk" * fknee_tag * "_bl" * bline_tag *
-               "_d" * lpad(requested_time_s, 3, '0') *
+               "_d" * lpad(requested_time_days, 3, '0') *
                "_" * sim_num * "_test_array_prealloc_GC"
 
 
 
-tsys_k = tnoise_k + tatm_k + ttel_k + tcmb_k
+#tsys_k = tnoise_k + tatm_k + ttel_k + tcmb_k
+tsys_k = tnoise_k .+ tatm_k .+ ttel_k .+ tcmb_k
+println("tsys_k: ", tsys_k)
 τ_s = 1 / fsamp_hz
-σ_k = (tsys_k / sqrt(β_hz * τ_s))
+σ_k = (tsys_k ./ sqrt(β_hz * τ_s))
 
 
 total_samples  = mission_duration_samples * num_of_polarimeters #intero
@@ -188,7 +197,8 @@ this_rank_chunk = chunks[rank + 1]
 
 
 
-printmsg("Reading map \"$(sky_map)\"\n")  #inizio errori
+
+printmsg("Reading map \"$(sky_map)\"\n")  
 inputmap_q = Healpix.readMapFromFITS(
     sky_map,
     2,
@@ -232,8 +242,6 @@ noise_tod_q = Sl.generate_noise_mpi(
     comm = comm,
     input_seed = seed_vec_q,
 )
-
-
 
 stokes = 3
 tmp_seed_u = iseed .* 19 .+ pol_id .* 999331 .+ isim .* 1867 .+ stokes .* 307
@@ -302,7 +310,8 @@ for i in 1:length(this_rank_chunk)
         times,
         #Dates.DateTime(2026, 01, 01, 00, 00, 00);
         day_duration_s = sidereal_day_s,
-        latitude_deg = 28.29, #modificare a 30.(?) che funziona con tutti i pol
+        #latitude_deg = 28.29,
+        latitude_deg = 28.30026 #funziona per tutti i pol (perché?)
     ) do time_s
         (0.0, deg2rad(20.0), Sl.timetorotang(time_s, 1.))
     end
@@ -337,16 +346,20 @@ for i in 1:length(this_rank_chunk)
 end
 
 #for now, assume uncorrelated noise between Q and U tod, so just sum in quadrature
-σ0 = tsys_k / sqrt(β_hz * τ_s)
-printmsg(@sprintf("input noise rms = %e K\n", σ0))
-
+σ0 = tsys_k ./ sqrt(β_hz * τ_s)
+printmsg("input noise rms = $(σ0)\n")
 
 total_samples_this_rank = sum(num_of_samples)
+@assert total_samples_this_rank == samples_per_process[rank+1]
 
 if (lmode == lowercase("Q") || lmode == lowercase("U"))
-    σ_k = σ_k .* ones(Float64, total_samples_this_rank)
+    σ_k_samp = vcat([ fill(σ_k[detector_number[i]], num_of_samples[i]) for i in 1:length(num_of_samples) ]...)
+    @assert length(σ_k_samp) == total_samples_this_rank
+    #σ_k = σ_k .* ones(Float64, total_samples_this_rank)
 elseif (lmode == lowercase("sum") || lmode == lowercase("diff"))
-    σ_k = σ_k*sqrt(2) .* ones(Float64, total_samples_this_rank)
+    σ_k_samp = vcat([ fill(σ_k[detector_number[i]]*sqrt(2), num_of_samples[i]) for i in 1:length(num_of_samples) ]...)
+    @assert length(σ_k_samp) == total_samples_this_rank
+    #σ_k = σ_k*sqrt(2) .* ones(Float64, total_samples_this_rank)
 else
     noise_tod = NaN
 end
@@ -376,21 +389,22 @@ end
 printmsg("================================\n")
 
 
-num_of_baselines = round.(Int, num_of_baselines) 
+num_of_baselines = round.(Int, num_of_baselines)
 num_of_samples = round.(Int, num_of_samples)
 #array con N elementi, uno per chunk appartenente a quel rank, con numero di campioni di ogni chunk (num of elements del chunk)
 detector_list = detector_number
-sigma_scalar = tsys_k / sqrt(β_hz * τ_s)
+sigma_scalar = tsys_k ./ sqrt(β_hz * τ_s)
 
 
 rms_list = [
-      fill(sigma_scalar, num_of_samples[i])  #num of samples[i] = num of elements chunk i]
+      fill(sigma_scalar[detector_list[i]], num_of_samples[i])  #num of samples[i] = num of elements chunk i]
       for i in 1:length(num_of_samples) #lunghezza pari al n. di chunk del processo corrente
 ]
 
 
 
 data_properties = Sl.build_noise_properties(detector_list, rms_list, num_of_baselines, num_of_samples, baseline_samples)
+
 cond_results = Sl.condnumber_mpi(
         pix_idx, num_of_pixels, twopsi, data_properties;
         comm     = comm,
@@ -412,7 +426,7 @@ Statistiche globali Condition Number (%d horn):
 """, num_of_polarimeters, medium, med, dev))
 
     if rank == 0
-      let fname = out_map_root * "_cond_multi_samp_h.fits"
+      let fname = out_map_root * "_cond_multi_samp_complete.fits"
         printmsg("Saving multi-horn condmap to \"$fname\"\n")
         condmap = Healpix.HealpixMap{Float64,Healpix.RingOrder}(NSIDE)
         condmap.pixels = condnum
@@ -433,17 +447,18 @@ rnr_buffer = Sl.binned_noise_variance_mpi(
     tod_mode = tod_mode
 )
 
+
 σ_pix = fill(hpx_badval, 2, num_of_pixels)
-
-valid_q = rnr_buffer[1, :] .> 0
-σ_pix[1, valid_q] .= 1.0 ./ sqrt.(rnr_buffer[1, valid_q])
-
-valid_u = rnr_buffer[3, :] .> 0
-σ_pix[2, valid_u] .= 1.0 ./ sqrt.(rnr_buffer[3, valid_u])
+valid = (rnr_buffer[1, :] .> 0) .& (rnr_buffer[3, :] .> 0)
+deter = rnr_buffer[1, valid] .* rnr_buffer[3, valid] .- rnr_buffer[2, valid].^2
+d = deter .> 0
+ok = findall(valid)[d]
+σ_pix[1, ok] .= sqrt.(rnr_buffer[3, ok] ./ deter[d])
+σ_pix[2, ok] .= sqrt.(rnr_buffer[1, ok] ./ deter[d])
 
 if rank == 0
 
-    for (i, suffix) in enumerate(("_Q_white_rms_samp_h.fits", "_U_white_rms_samp_h.fits"))
+    for (i, suffix) in enumerate(("_Q_white_rms_samp_complete.fits", "_U_white_rms_samp_complete.fits"))
         let m = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
             m.pixels = σ_pix[i, :]
             Healpix.saveToFITS(m, out_map_root * suffix, typechar="D")
@@ -452,7 +467,8 @@ if rank == 0
     end
 
 
-    vals = σ_pix[.!isnan.(σ_pix)]
+   # vals = σ_pix[.!isnan.(σ_pix)] 
+   vals = σ_pix[σ_pix .!= hpx_badval]
     μ_rms = Statistics.mean(vals)
     σ_rms = Statistics.std(vals)
     @printf("Pixel white-noise RMS (osservati): mean = %e, std = %e\n", μ_rms, σ_rms)
@@ -465,13 +481,13 @@ results = Sl.destripe(pix_idx, tod, num_of_pixels, twopsi, data_properties, rank
 printmsg(@sprintf("Reached %e in %d iterations \n",last(results.convergence_param_list),results.best_iteration))
 
 if rank == 0
-    out_map_name =  out_map_root*"_Q_multi_samp_h.fits"
+    out_map_name =  out_map_root*"_Q_multi_samp_complete.fits"
     printmsg("Saving the map in \"$(out_map_name)\"\n")
     mapfile = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
     mapfile.pixels = results.best_sky_map[1,:]
     Healpix.saveToFITS(mapfile, out_map_name, typechar = "D")
 
-    out_map_name =  out_map_root*"_U_multi_samp_h.fits"
+    out_map_name =  out_map_root*"_U_multi_samp_complete.fits"
     printmsg("Saving the map in \"$(out_map_name)\"\n")
     mapfile = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
     mapfile.pixels = results.best_sky_map[2,:]
