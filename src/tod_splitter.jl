@@ -214,9 +214,14 @@ function get_chunk_properties(chunks, baseline_samples, fsamp_hz, rank)
         first_time[i] = (this_rank_chunk[i].first_idx - 1) / fsamp_hz
         last_time[i] = (this_rank_chunk[i].last_idx - 1) / fsamp_hz
         num_of_samples[i] = this_rank_chunk[i].num_of_elements 
+        if num_of_samples[i] == 0
+            @warn "Chunk vuoto: i=$i det=$detector_number[i]"
+        end
         #num_of_baselines[i] = round(Int, num_of_samples[i] / baseline_samples[detector_number[i]]) #arrotondato, forse genera problemi perché non coerente con indici this_rank_chunk
         num_of_baselines[i] = ceil(Int, num_of_samples[i] / baseline_samples[detector_number[i]])
-        
+        if num_of_baselines[i] == 0
+            @warn "Num of baselines null: i=$i det=$detector_number[i]"
+        end
     end
     return (detector_number, first_time, last_time, num_of_baselines, num_of_samples)
 end
