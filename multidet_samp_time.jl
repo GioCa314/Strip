@@ -1,4 +1,3 @@
-
 import MPI
 import Healpix
 import Random
@@ -29,10 +28,10 @@ printmsg(@sprintf("""MPI parameters:
 """, rank, commsize))
 
 
-num_of_polarimeters = 2
+num_of_polarimeters = 1
 fsamp_hz = 50
 NSIDE = 256
-requested_time_days = 10
+requested_time_days = 40
 
 hpx_badval    = -1.6375e30
 sidereal_day_s = 86164.0905
@@ -78,7 +77,7 @@ sim_num = string(isim,base=10,pad=5)
 #we set horn ID and the pull all detectors parameters from the database
 db = Sl.InstrumentDB()
 
-horn_id = ["I1", "I1"] 
+horn_id = ["I0"] 
 println("using polarimeters: ", horn_id)
 
 hrn     = [db.focalplane[hid] for hid in horn_id]
@@ -154,10 +153,8 @@ fknee_tag = join((@sprintf("%04.3f", x) for x in fknee_hz), "-")
 bline_tag = join([@sprintf("%04.3f", bl) for bl in baseline_length_s], "-")
 horns_tag = join(horn_id, "-")
 out_map_root = "/home/users/giorgia.caruso1.stud/stripmultimap/users/Giorgia/sim_" * tod_mode *
-               "-diode_Oof_destr_" * horns_tag *
-               "_fk" * fknee_tag * "_bl" * bline_tag *
                "_d" * lpad(requested_time_days, 3, '0') *
-               "_" * sim_num * "_test_array_prealloc_GC"
+               "_" * sim_num * "_test_array_prealloc_GC_random"
 
 
 
@@ -308,12 +305,23 @@ for i in 1:length(this_rank_chunk)
     local (dirs, psi) = Sl.genpointings(
         horient[polarid],
         times,
-        #Dates.DateTime(2026, 01, 01, 00, 00, 00);
-        day_duration_s = sidereal_day_s,
+       # Dates.DateTime(2026, 01, 01, 00, 00, 00);
+        day_duration_s = 86400,
         #latitude_deg = 28.29,
         latitude_deg = 28.30026 #funziona per tutti i pol (perché?)
     ) do time_s
-        (0.0, deg2rad(20.0), Sl.timetorotang(time_s, 1.))
+       # (0.0, deg2rad(20.0), Sl.timetorotang(time_s, 1.))
+        local daynum = floor(time_s / 86400) #modifico la funzione per +-5°, passo 0.25°
+        local pday = mod(daynum, 40.0)
+        local incl
+        if pday <= 20.0
+            incl = 15.0 + 0.50 * pday
+        else
+            incl = 25.0 - 0.50 * (pday - 20.0)
+        end
+        local gradi = deg2rad(incl)
+        return (0.0, gradi, Sl.timetorotang(time_s, 1.))
+    
     end
 
 
@@ -344,6 +352,28 @@ for i in 1:length(this_rank_chunk)
 
 
 end
+
+hits_pol_local = zeros(Int64, num_of_pixels)
+
+
+for p in pix_idx
+    hits_pol_local[p] += 1
+end
+
+
+hits_pol_global = MPI.Allreduce(hits_pol_local, +, comm)
+
+
+if rank == 0
+    hitmap_pol = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
+    hitmap_pol.pixels .= Float64.(hits_pol_global)
+
+    fname = out_map_root * "_NHITS_QU.fits"
+    Healpix.saveToFITS(hitmap_pol, fname, typechar="D")
+    printmsg("Saved hit-count map: $fname\n")
+end
+
+
 
 #for now, assume uncorrelated noise between Q and U tod, so just sum in quadrature
 σ0 = tsys_k ./ sqrt(β_hz * τ_s)
@@ -495,3 +525,4 @@ if rank == 0
 end
 
 MPI.Finalize()
+
