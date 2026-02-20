@@ -1,3 +1,4 @@
+
 import MPI
 import Healpix
 import Random
@@ -28,10 +29,10 @@ printmsg(@sprintf("""MPI parameters:
 """, rank, commsize))
 
 
-num_of_polarimeters = 1
+num_of_polarimeters = 3
 fsamp_hz = 50
 NSIDE = 256
-requested_time_days = 40
+requested_time_days = 15
 
 hpx_badval    = -1.6375e30
 sidereal_day_s = 86164.0905
@@ -77,7 +78,7 @@ sim_num = string(isim,base=10,pad=5)
 #we set horn ID and the pull all detectors parameters from the database
 db = Sl.InstrumentDB()
 
-horn_id = ["I0"] 
+horn_id = ["I0", "Y4", "O2"] 
 println("using polarimeters: ", horn_id)
 
 hrn     = [db.focalplane[hid] for hid in horn_id]
@@ -154,7 +155,7 @@ bline_tag = join([@sprintf("%04.3f", bl) for bl in baseline_length_s], "-")
 horns_tag = join(horn_id, "-")
 out_map_root = "/home/users/giorgia.caruso1.stud/stripmultimap/users/Giorgia/sim_" * tod_mode *
                "_d" * lpad(requested_time_days, 3, '0') *
-               "_" * sim_num * "_test_array_prealloc_GC_random"
+               "_" * sim_num * "test_array_prealloc_GC_random"
 
 
 
@@ -353,28 +354,6 @@ for i in 1:length(this_rank_chunk)
 
 end
 
-hits_pol_local = zeros(Int64, num_of_pixels)
-
-
-for p in pix_idx
-    hits_pol_local[p] += 1
-end
-
-
-hits_pol_global = MPI.Allreduce(hits_pol_local, +, comm)
-
-
-if rank == 0
-    hitmap_pol = Healpix.HealpixMap{Float64, Healpix.RingOrder}(NSIDE)
-    hitmap_pol.pixels .= Float64.(hits_pol_global)
-
-    fname = out_map_root * "_NHITS_QU.fits"
-    Healpix.saveToFITS(hitmap_pol, fname, typechar="D")
-    printmsg("Saved hit-count map: $fname\n")
-end
-
-
-
 #for now, assume uncorrelated noise between Q and U tod, so just sum in quadrature
 σ0 = tsys_k ./ sqrt(β_hz * τ_s)
 printmsg("input noise rms = $(σ0)\n")
@@ -525,4 +504,3 @@ if rank == 0
 end
 
 MPI.Finalize()
-
