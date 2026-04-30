@@ -28,10 +28,10 @@ printmsg(@sprintf("""MPI parameters:
 """, rank, commsize))
 
 
-num_of_polarimeters = 3
+num_of_polarimeters = 1
 fsamp_hz = 50
 NSIDE = 256
-requested_time_days = 30
+requested_time_days = 20
 
 hpx_badval    = -1.6375e30
 sidereal_day_s = 86164.0905
@@ -77,7 +77,7 @@ sim_num = string(isim,base=10,pad=5)
 #we set horn ID and the pull all detectors parameters from the database
 db = Sl.InstrumentDB()
 
-horn_id = ["O1", "R2", "V4"] 
+horn_id = ["I0"] 
 println("using polarimeters: ", horn_id)
 
 hrn     = [db.focalplane[hid] for hid in horn_id]
@@ -154,7 +154,7 @@ bline_tag = join([@sprintf("%04.3f", bl) for bl in baseline_length_s], "-")
 horns_tag = join(horn_id, "-")
 out_map_root = "/home/users/giorgia.caruso1.stud/cmbgroup/users/giorgia.caruso/sim_" * tod_mode *
                "_d" * lpad(requested_time_days, 3, '0') *
-               "_" * sim_num * "_O1R2V4_test_array_prealloc_GC_random_indep_strategy_centre_continue_azdec"
+               "_" * sim_num * "_I0_azscan_test_array_prealloc_GC_random_indep_strategy_centre_continue_basic"
 
 
 
@@ -307,82 +307,74 @@ for i in 1:length(this_rank_chunk)
     horient[polarid],
     times,
     day_duration_s = 86164.0905,
-    latitude_deg = 28.30026
+    latitude_deg = 28.30026 
     ) do time_s
 
-  #Teide
-        local lat_deg = 28.30026
-        local lon_deg = -16.5100
-        local lat = deg2rad(lat_deg)
-        local lon = deg2rad(lon_deg)
 
-#centro patch scelto (coord. equator.)
-        local dec_center = deg2rad(75.0)  #verifico tracking per sopra orizzonte e notazione latitudine/colatitudine (Healpix usa colat.)
-        local ra_center  = deg2rad(0.0)
-
-#parametri movimento "azimuth" (direz. orizz.) rispetto al centro 
-        local delta_xi_deg = 5.0
-        local delta_xi = deg2rad(delta_xi_deg)
-        local Txi = 60.0
-
-#param. movimento "declin". (vert.) rispetto al centro (T = 8 h)
-
-        local eta_step_deg = 0.5
-        local max_eta_deg = 1.0
-        local eta_block_time = 3600.0
+        local ra_target = 0.0
+        local dec_target = 1.3089969389957472   # rad(75.0°)
+        local omega_sid  = 7.292115854942991e-5 # rad/s (2π / 86164.0905)
+        local lst_0      = 0.0                  # LST iniziale (arbitrario)
     
-#funzione azimuth triangolare, normalizzata tra -1 e +1 (continua: ok?)
-        local function triwave(t, period)
-            local p = mod(t, period) / period
-            return 1.0 - 4.0 * abs(p - 0.5)
-        end
-        
-#funzione declin. (a gradini)
-        local function stepwave(t, step_time, step_deg, max_offset_deg)
-            local nlev = Int(round(2 * max_offset_deg / step_deg)) + 1
-            local k = floor(Int, t / step_time)
-            local m = mod(k, 2 * (nlev - 1))
-            local idx = m < nlev ? m : 2 * (nlev - 1) - m
-            return -max_offset_deg + idx * step_deg
-        end
+    # Parametri sito
+        local slat = 0.47409
+        local clat = 0.88047
+    
+    # Parametri patch già convertiti
+        local sdec = 0.96592
+        local cdec = 0.25881
+    
+    # tempo siderale locale ed angolo orario
+        local lst = lst_0 + omega_sid * time_s
+        local ha  = lst - ra_target
 
-#applicazione parametri azi - decl a funzioni rispetto al centro -> movimenti su direzioni "piatte" rispetto al centro
-        local xi = tan(delta_xi * triwave(time_s, Txi))
-        local eta = tan(deg2rad(stepwave(time_s, eta_block_time, eta_step_deg, max_eta_deg)))
+    # funzioni trigonometriche di HA
+        local cha = cos(ha)
+        local sha = sin(ha)
 
-#mappa movimenti sulla sfera -> proiezione 
-
-        local sin_dec0 = sin(dec_center)
-        local cos_dec0 = cos(dec_center)
-
-        local denom = cos_dec0 - eta * sin_dec0  # termine correzione per curva sferica 
-        local ra = ra_center + atan(xi, denom)
-        local dec = atan(
-            sin_dec0 + eta * cos_dec0,
-            sqrt(denom^2 + xi^2)
-        )
-
-        ra = mod(ra, 2π)
-
-#conversione in sistema locale telescopio 
-        local omega = 2π / 86164.0905          #vel. ang. rotazione Terra
-        local lst = omega * time_s + lon       # local sidereal time 
-
-        local ha = mod(lst - ra + π, 2π) - π   # hour angle (lst - right asc.) tra -pi, +pi
-
-
-        local sin_alt = sin(dec) * sin(lat) + cos(dec) * cos(lat) * cos(ha)    #conversione in alt
+    # Alt con formule
+        local sin_alt = slat * sdec + clat * cdec * cha
         local alt = asin(clamp(sin_alt, -1.0, 1.0))
 
-        local y = -sin(ha) * cos(dec)                                         #conversione in azim
-        local x =  sin(dec) * cos(lat) - cos(dec) * sin(lat) * cos(ha)
-        local az = mod(atan(y, x), 2π)
+    # Az con formule
+        local az = atan(sha * cdec, cdec * cha * slat - sdec * clat)
 
+        #oscillazione azimuth
+        local ampiezza_rad = deg2rad(5.0)
+        local periodo_s = 60.0
+        local fase = mod(time_s, periodo_s) / periodo_s
+        
+        local d_az = 0.0
+        if fase < 0.5
+            d_az = 4.0 * fase - 1.0
+        else
+            d_az = 3.0 - 4.0 * fase
+        end
+        local spostamento = ampiezza_rad * d_az
 
-        local zenith_angle = (π/2) - alt        #per convenzione genpointings (o no?)
+    #  angoli secondo convenzione Stripeline
+    # W1 - Boresight (asse Z)
+        local w1 = 0.0
+    # W2 - Alt (asse Y)
+        local w2 = (π/2) - alt
+    # W3: - Ground (asse Z) - az
+        local w3 = mod(az + spostamento, 2π)
 
-        return (0.0, zenith_angle, az)
+        return (w1, w2, w3)  #faccio stampare dirs ad alcuni istanti scelti, ed applico trasf. inversa (uso i valori per centro patch in input) 
+        #per verificare se, con trasformazioni, in uscita si ottengono gli stessi 
+    end
 
+    
+    for j in 1:ns
+        local t_curr = times[j]
+       
+        if mod(t_curr, 50000.0) < τ_s
+            local current_dec = 90.0 - rad2deg(dirs[j, 1])
+            local current_ra  = rad2deg(dirs[j, 2])
+            
+            @printf("\n[RANK %d] Tempo: %.2f s | Giorno: %.3f | RA: %.4f° | DEC: %.4f°", 
+                    rank, t_curr, t_curr/86400.0, current_ra, current_dec)
+        end
     end
 
     local partial_pix_idx = Healpix.ang2pixRing.(
